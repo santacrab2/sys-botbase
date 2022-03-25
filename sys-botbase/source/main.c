@@ -13,6 +13,7 @@
 #include "util.h"
 #include "freeze.h"
 #include <poll.h>
+#include "time.h"
 
 #define TITLE_ID 0x430000000000000B
 #define HEAP_SIZE 0x00C00000
@@ -50,7 +51,7 @@ u8 clickToken = 0;
 
 // we aren't an applet
 u32 __nx_applet_type = AppletType_None;
-
+TimeServiceType __nx_time_service_type = TimeServiceType_System;
 // we override libnx internals to do a minimal init
 void __libnx_initheap(void)
 {
@@ -68,6 +69,9 @@ void __appInit(void)
     Result rc;
     svcSleepThread(20000000000L);
     rc = smInitialize();
+    if (R_FAILED(rc))
+        fatalThrow(rc);
+    rc = apmInitialize();
     if (R_FAILED(rc))
         fatalThrow(rc);
     if (hosversionGet() == 0) {
@@ -88,7 +92,13 @@ void __appInit(void)
         fatalThrow(rc);
     rc = timeInitialize();
     if (R_FAILED(rc))
-        fatalThrow(rc);
+        {
+            timeExit();
+            __nx_time_service_type = TimeServiceType_User;
+            rc = timeInitialize();
+            if (R_FAILED(rc))
+                fatalThrow(rc);
+        }
     rc = pmdmntInitialize();
 	if (R_FAILED(rc)) 
         fatalThrow(rc);
@@ -107,6 +117,7 @@ void __appInit(void)
     rc = viInitialize(ViServiceType_Default);
     if (R_FAILED(rc))
         fatalThrow(rc);
+
     if (hosversionBefore(14,0,0)) // lbl max sessions when 14.0.0
     {
         rc = lblInitialize();
@@ -832,6 +843,18 @@ int argmain(int argc, char **argv)
         printf("%d\n", charge);
         psmExit();
     }
+    if (!strcmp(argv[0], "daySkip"))
+    {
+        int resetTimeAfterSkips = parseStringToInt(argv[1]);
+        int resetNTP = parseStringToInt(argv[2]);
+        dateSkip(resetTimeAfterSkips, resetNTP);
+    }
+
+    if (!strcmp(argv[0], "resetTime"))
+        resetTime();
+
+    if (!strcmp(argv[0], "resetTimeNTP"))
+        resetTimeNTP();
 
     return 0;
 }
@@ -901,8 +924,9 @@ int main()
     // click sequence thread
     mutexInit(&clickMutex);
     rc = threadCreate(&clickThread, sub_click, (void*)currentClick, NULL, THREAD_SIZE, 0x2C, -2); 
-    if (R_SUCCEEDED(rc))
+    if (R_SUCCEEDED(rc)) {
         rc = threadStart(&clickThread);
+    }
     
 	flashLed();
 
